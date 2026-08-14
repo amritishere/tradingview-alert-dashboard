@@ -1,4 +1,3 @@
-
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -7,7 +6,6 @@ import {
   ChevronDown,
   ExternalLink,
   Filter,
-  Menu,
   RefreshCw,
   Search,
   X,
@@ -17,6 +15,7 @@ import "./styles.css";
 
 const API_BASE = "https://api.monkalphacapital.com";
 const POLL_MS = 5000;
+const TIME_ZONE = "Asia/Kolkata";
 
 type Alert = {
   id: number;
@@ -39,6 +38,50 @@ type ApiResponse = {
   error?: string;
 };
 
+const dateKey = (value: string | null) =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(value || ""));
+
+const formatDate = (value: string | null) =>
+  new Intl.DateTimeFormat("en-US", {
+    timeZone: TIME_ZONE,
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(value || ""));
+
+const formatTime = (value: string | null) =>
+  new Intl.DateTimeFormat("en-US", {
+    timeZone: TIME_ZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  }).format(new Date(value || ""));
+
+const formatUpdated = (value: Date) =>
+  new Intl.DateTimeFormat("en-US", {
+    timeZone: TIME_ZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  }).format(value);
+
+const messageText = (message: string | null) => {
+  if (!message) return "No message";
+  return message === "{{alert_message}}" ? "TradingView Alert" : message;
+};
+
+const buildTradingViewUrl = (ticker: string, exchange?: string | null) => {
+  const symbol = exchange ? `${exchange}:${ticker}` : ticker;
+  return `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(symbol)}`;
+};
+
 function App() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [selectedDate, setSelectedDate] = useState("all");
@@ -52,6 +95,7 @@ function App() {
   const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [sound, setSound] = useState(false);
+  const [newIds, setNewIds] = useState<Set<number>>(new Set());
   const knownIds = useRef<Set<number>>(new Set());
   const firstLoad = useRef(true);
 
@@ -64,7 +108,7 @@ function App() {
       if (!data.success) throw new Error(data.error || "API error");
 
       const incoming = data.alerts || [];
-      const hasNew = incoming.some((a) => !knownIds.current.has(a.id));
+      const fresh = incoming.filter((a) => !knownIds.current.has(a.id));
 
       setAlerts((current) => {
         const map = new Map<number, Alert>();
@@ -80,18 +124,23 @@ function App() {
       setOnline(true);
       setLastUpdate(new Date());
 
-      if (!firstLoad.current && hasNew && sound) {
-        try {
-          const ctx = new AudioContext();
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.frequency.value = 880;
-          gain.gain.value = 0.035;
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.start();
-          osc.stop(ctx.currentTime + 0.08);
-        } catch {}
+      if (!firstLoad.current && fresh.length) {
+        setNewIds(new Set(fresh.map((a) => a.id)));
+        window.setTimeout(() => setNewIds(new Set()), 8000);
+
+        if (sound) {
+          try {
+            const ctx = new AudioContext();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.frequency.value = 880;
+            gain.gain.value = 0.035;
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.08);
+          } catch {}
+        }
       }
       firstLoad.current = false;
     } catch {
@@ -108,81 +157,61 @@ function App() {
     return () => window.clearInterval(timer);
   }, [sound]);
 
-  const todayKey = new Date().toLocaleDateString("en-CA");
+  const todayKey = dateKey(new Date().toISOString());
 
   const dates = useMemo(() => {
     const unique = new Set<string>();
-    alerts.forEach((a) => {
-      const d = new Date(a.triggered_at || a.received_at);
-      if (!Number.isNaN(d.getTime())) unique.add(d.toLocaleDateString("en-CA"));
-    });
+    alerts.forEach((a) => unique.add(dateKey(a.triggered_at || a.received_at)));
     return [...unique].sort().reverse();
   }, [alerts]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return alerts.filter((a) => {
-      const date = new Date(a.triggered_at || a.received_at).toLocaleDateString("en-CA");
+      const date = dateKey(a.triggered_at || a.received_at);
       const matchesDate = selectedDate === "all" || date === selectedDate;
       const matchesType = type === "all" || (a.alert_type || "") === type;
       const matchesExchange = exchange === "all" || (a.exchange || "") === exchange;
-      const haystack = [
-        a.ticker,
-        a.message,
-        a.alert_type,
-        a.exchange,
-        a.timeframe,
-      ].join(" ").toLowerCase();
+      const haystack = [a.ticker, a.message, a.alert_type, a.exchange, a.timeframe]
+        .join(" ")
+        .toLowerCase();
       return matchesDate && matchesType && matchesExchange && (!q || haystack.includes(q));
     });
   }, [alerts, selectedDate, search, type, exchange]);
 
   const todayAlerts = alerts.filter(
-    (a) => new Date(a.triggered_at || a.received_at).toLocaleDateString("en-CA") === todayKey
+    (a) => dateKey(a.triggered_at || a.received_at) === todayKey
   ).length;
 
   const weekStart = new Date();
   weekStart.setHours(0, 0, 0, 0);
   weekStart.setDate(weekStart.getDate() - 6);
-  const weekAlerts = alerts.filter((a) => {
-    const d = new Date(a.triggered_at || a.received_at);
-    return d >= weekStart;
-  }).length;
+  const weekAlerts = alerts.filter((a) => new Date(a.triggered_at || a.received_at) >= weekStart).length;
 
   const uniqueToday = new Set(
     alerts
-      .filter(
-        (a) =>
-          new Date(a.triggered_at || a.received_at).toLocaleDateString("en-CA") === todayKey
-      )
+      .filter((a) => dateKey(a.triggered_at || a.received_at) === todayKey)
       .map((a) => a.ticker.toUpperCase())
   ).size;
 
   const types = [...new Set(alerts.map((a) => a.alert_type).filter(Boolean))] as string[];
   const exchanges = [...new Set(alerts.map((a) => a.exchange).filter(Boolean))] as string[];
 
-  const formatDate = (value: string | null) =>
-    new Date(value || "").toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
+  const grouped = useMemo(() => {
+    const groups = new Map<string, Alert[]>();
+    filtered.forEach((alert) => {
+      const key = dateKey(alert.triggered_at || alert.received_at);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(alert);
     });
+    return [...groups.entries()].sort(([a], [b]) => b.localeCompare(a));
+  }, [filtered]);
 
-  const formatTime = (value: string | null) =>
-    new Date(value || "").toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-
-  const buildTradingViewUrl = (ticker: string, ex?: string | null) => {
-    const symbol = ex ? `${ex}:${ticker}` : ticker;
-    return `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(symbol)}`;
-  };
-
-  const messageText = (message: string | null) => {
-    if (!message) return "No message";
-    return message === "{{alert_message}}" ? "TradingView Alert" : message;
+  const clearFilters = () => {
+    setSelectedDate("all");
+    setType("all");
+    setExchange("all");
+    setSearch("");
   };
 
   return (
@@ -191,8 +220,8 @@ function App() {
         <div className="brand">
           <div className="brand-mark"><Zap size={17} strokeWidth={2.5} /></div>
           <div>
-            <div className="brand-title">TradingView Alerts</div>
-            <div className="brand-subtitle">Monk Alpha Capital</div>
+            <div className="brand-title">Monk Alpha Capital</div>
+            <div className="brand-subtitle">TradingView Alert Monitor</div>
           </div>
         </div>
 
@@ -202,9 +231,9 @@ function App() {
             {online ? "LIVE" : "OFFLINE"}
           </div>
           <span className="last-update">
-            {lastUpdate ? `Updated ${lastUpdate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Connecting..."}
+            {lastUpdate ? `Updated ${formatUpdated(lastUpdate)} IST` : "Connecting..."}
           </span>
-          <button className="icon-btn" onClick={() => loadAlerts(true)} title="Refresh">
+          <button className="icon-btn" onClick={() => loadAlerts(true)} title="Refresh alerts" aria-label="Refresh alerts">
             <RefreshCw size={17} className={refreshing ? "spin" : ""} />
           </button>
         </div>
@@ -213,8 +242,9 @@ function App() {
       <main className="container">
         <section className="intro">
           <div>
-            <h1>Alert Dashboard</h1>
-            <p>Monitor, search and review every TradingView alert in one place.</p>
+            <div className="kicker"><span /> REAL-TIME ALERT FEED</div>
+            <h1>TradingView Alerts</h1>
+            <p>Every alert received by Monk Alpha Capital, organized and searchable.</p>
           </div>
           <button className={`sound-toggle ${sound ? "active" : ""}`} onClick={() => setSound(!sound)}>
             <Activity size={15} />
@@ -232,24 +262,18 @@ function App() {
         <section className="toolbar">
           <div className="search-box">
             <Search size={17} />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search ticker or alert..."
-            />
-            {search && <button onClick={() => setSearch("")}><X size={15} /></button>}
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search ticker, exchange or alert..." />
+            {search && <button onClick={() => setSearch("")} aria-label="Clear search"><X size={15} /></button>}
           </div>
-
           <div className="toolbar-actions">
             <button className="filter-toggle" onClick={() => setShowFilters(!showFilters)}>
-              <Filter size={16} /> Filters
-              <ChevronDown size={15} className={showFilters ? "rotate" : ""} />
+              <Filter size={16} /> Filters <ChevronDown size={15} className={showFilters ? "rotate" : ""} />
             </button>
-            <select value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)}>
+            <select value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} aria-label="Filter by date">
               <option value="all">All Dates</option>
               <option value={todayKey}>Today</option>
               {dates.filter((d) => d !== todayKey).slice(0, 30).map((d) => (
-                <option key={d} value={d}>{formatDate(d + "T12:00:00")}</option>
+                <option key={d} value={d}>{formatDate(d + "T12:00:00Z")}</option>
               ))}
             </select>
           </div>
@@ -257,34 +281,28 @@ function App() {
 
         {showFilters && (
           <section className="filters">
-            <label>
-              Alert Type
+            <label>Alert Type
               <select value={type} onChange={(e) => setType(e.target.value)}>
                 <option value="all">All Types</option>
                 {types.map((v) => <option key={v} value={v}>{v}</option>)}
               </select>
             </label>
-            <label>
-              Exchange
+            <label>Exchange
               <select value={exchange} onChange={(e) => setExchange(e.target.value)}>
                 <option value="all">All Exchanges</option>
                 {exchanges.map((v) => <option key={v} value={v}>{v}</option>)}
               </select>
             </label>
-            <button className="clear-btn" onClick={() => { setSelectedDate("all"); setType("all"); setExchange("all"); setSearch(""); }}>
-              Clear filters
-            </button>
+            <button className="clear-btn" onClick={clearFilters}>Clear filters</button>
           </section>
         )}
 
         <div className="feed-header">
           <div>
-            <span className="section-title">
-              {selectedDate === "all" ? "Latest Alerts" : formatDate(selectedDate + "T12:00:00")}
-            </span>
-            <span className="result-count">{filtered.length} alerts</span>
+            <span className="section-title">{selectedDate === "all" ? "Alert History" : formatDate(selectedDate + "T12:00:00Z")}</span>
+            <span className="result-count">{filtered.length} {filtered.length === 1 ? "alert" : "alerts"}</span>
           </div>
-          <span className="polling"><span /> Auto-refresh {POLL_MS / 1000}s</span>
+          <span className="polling"><span /> Auto-refresh every 5s</span>
         </div>
 
         <section className="feed">
@@ -297,39 +315,43 @@ function App() {
               <span>{alerts.length ? "Try changing your search or filters." : "Waiting for the first TradingView alert."}</span>
             </div>
           ) : (
-            filtered.map((alert) => (
-              <article className="alert-row" key={alert.id} onClick={() => setSelectedAlert(alert)}>
-                <div className="alert-time">
-                  <strong>{formatTime(alert.triggered_at || alert.received_at)}</strong>
-                  <span>{formatDate(alert.triggered_at || alert.received_at)}</span>
+            grouped.map(([groupDate, groupAlerts]) => (
+              <div className="date-group" key={groupDate}>
+                <div className="date-heading">
+                  <span>{groupDate === todayKey ? "TODAY" : formatDate(groupDate + "T12:00:00Z").toUpperCase()}</span>
+                  <i />
+                  <small>{groupAlerts.length} {groupAlerts.length === 1 ? "alert" : "alerts"}</small>
                 </div>
-                <div className="ticker">
-                  <strong>{alert.ticker}</strong>
-                  <span>{alert.exchange || "—"}</span>
-                </div>
-                <div className="price">
-                  <strong>{alert.price == null ? "—" : `$${Number(alert.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`}</strong>
-                  <span>{alert.timeframe ? `${alert.timeframe} min` : "—"}</span>
-                </div>
-                <div className="alert-info">
-                  <div className="type-line">
-                    <span className={`type-dot ${/buy|long|bull/i.test(alert.alert_type || alert.message || "") ? "positive" : /sell|short|bear/i.test(alert.alert_type || alert.message || "") ? "negative" : ""}`} />
-                    <strong>{alert.alert_type || "TradingView Alert"}</strong>
-                  </div>
-                  <p>{messageText(alert.message)}</p>
-                </div>
-                <div className="row-actions">
-                  <button
-                    className="tv-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      window.open(buildTradingViewUrl(alert.ticker, alert.exchange), "_blank", "noopener,noreferrer");
-                    }}
-                  >
-                    Open TradingView <ExternalLink size={14} />
-                  </button>
-                </div>
-              </article>
+                {groupAlerts.map((alert) => (
+                  <article className={`alert-row ${newIds.has(alert.id) ? "new-alert" : ""}`} key={alert.id} onClick={() => setSelectedAlert(alert)}>
+                    <div className="alert-time">
+                      <strong>{formatTime(alert.triggered_at || alert.received_at)}</strong>
+                      <span>IST</span>
+                    </div>
+                    <div className="ticker">
+                      <strong>{alert.ticker}</strong>
+                      <span>{alert.exchange || "—"}</span>
+                    </div>
+                    <div className="price">
+                      <strong>{alert.price == null ? "—" : `$${Number(alert.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`}</strong>
+                      <span>{alert.timeframe ? `${alert.timeframe} min` : "—"}</span>
+                    </div>
+                    <div className="alert-info">
+                      <div className="type-line">
+                        <span className={`type-dot ${/buy|long|bull/i.test(alert.alert_type || alert.message || "") ? "positive" : /sell|short|bear/i.test(alert.alert_type || alert.message || "") ? "negative" : ""}`} />
+                        <strong>{alert.alert_type || "TradingView Alert"}</strong>
+                        {newIds.has(alert.id) && <em>NEW</em>}
+                      </div>
+                      <p>{messageText(alert.message)}</p>
+                    </div>
+                    <div className="row-actions">
+                      <button className="tv-btn" onClick={(e) => { e.stopPropagation(); window.open(buildTradingViewUrl(alert.ticker, alert.exchange), "_blank", "noopener,noreferrer"); }}>
+                        Open TradingView <ExternalLink size={14} />
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
             ))
           )}
         </section>
@@ -342,20 +364,21 @@ function App() {
               <div>
                 <span className="eyebrow">Alert #{selectedAlert.id}</span>
                 <h2>{selectedAlert.ticker}</h2>
+                <span className="detail-date">{formatDate(selectedAlert.triggered_at || selectedAlert.received_at)} · {formatTime(selectedAlert.triggered_at || selectedAlert.received_at)} IST</span>
               </div>
-              <button className="icon-btn" onClick={() => setSelectedAlert(null)}><X size={18} /></button>
+              <button className="icon-btn" onClick={() => setSelectedAlert(null)} aria-label="Close alert details"><X size={18} /></button>
             </div>
             <div className="detail-grid">
               <Detail label="Price" value={selectedAlert.price == null ? "—" : `$${selectedAlert.price}`} />
               <Detail label="Exchange" value={selectedAlert.exchange || "—"} />
               <Detail label="Timeframe" value={selectedAlert.timeframe ? `${selectedAlert.timeframe} min` : "—"} />
               <Detail label="Type" value={selectedAlert.alert_type || "TradingView Alert"} />
-              <Detail label="Triggered" value={`${formatDate(selectedAlert.triggered_at)} · ${formatTime(selectedAlert.triggered_at)}`} />
-              <Detail label="Received" value={`${formatDate(selectedAlert.received_at)} · ${formatTime(selectedAlert.received_at)}`} />
+              <Detail label="Triggered" value={`${formatDate(selectedAlert.triggered_at)} · ${formatTime(selectedAlert.triggered_at)} IST`} />
+              <Detail label="Received" value={`${formatDate(selectedAlert.received_at)} · ${formatTime(selectedAlert.received_at)} IST`} />
             </div>
             <div className="message-block">
               <span className="eyebrow">Message</span>
-              <p>{selectedAlert.message || "No message"}</p>
+              <p>{messageText(selectedAlert.message)}</p>
             </div>
             {selectedAlert.raw_payload && (
               <details className="raw">
@@ -363,10 +386,7 @@ function App() {
                 <pre>{(() => { try { return JSON.stringify(JSON.parse(selectedAlert.raw_payload!), null, 2); } catch { return selectedAlert.raw_payload; } })()}</pre>
               </details>
             )}
-            <button
-              className="primary-btn"
-              onClick={() => window.open(buildTradingViewUrl(selectedAlert.ticker, selectedAlert.exchange), "_blank", "noopener,noreferrer")}
-            >
+            <button className="primary-btn" onClick={() => window.open(buildTradingViewUrl(selectedAlert.ticker, selectedAlert.exchange), "_blank", "noopener,noreferrer")}>
               Open TradingView <ExternalLink size={15} />
             </button>
           </aside>
