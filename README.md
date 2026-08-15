@@ -1,61 +1,67 @@
-# TradingView Alert Dashboard
+# Monk Alpha Capital — TradingView Alert Dashboard
 
-Frontend-only Cloudflare-ready dashboard for the existing Monk Alpha Capital TradingView API.
+Lightweight production dashboard for Monk Alpha Capital's TradingView alerts.
 
-## Existing production API
+## Production endpoints
 
-- API base: https://api.monkalphacapital.com
-- Alerts: https://api.monkalphacapital.com/alerts
-- Ticker filter: https://api.monkalphacapital.com/alerts?ticker=TSLA
-- Health: https://api.monkalphacapital.com/health
+- Dashboard: https://monkalphacapital.com
+- Existing alert API: https://api.monkalphacapital.com
+- Alerts API: https://api.monkalphacapital.com/alerts
+- Health check: https://api.monkalphacapital.com/health
+- TradingView webhook receiver: https://tradingview-webhook.amrit-rj99.workers.dev
 
-This project DOES NOT recreate or modify the existing Worker or D1 database.
+The frontend does **not** recreate or modify the existing webhook Worker or D1 database. It reads the existing `/alerts` API and refreshes every 5 seconds.
 
-## Run locally
+## TradingView alert setup
+
+For the **Daily HL Match - Data + Alerts (0.01, 60)** Pine indicator, the alert should use:
+
+- Condition: `Daily HL Match - Data + Alerts (0.01, 60)`
+- Trigger: **Any alert() function call**
+- Webhook URL: `https://tradingview-webhook.amrit-rj99.workers.dev`
+
+The dashboard recognizes the messages produced by the script, including:
+
+- `HIGH MATCH | TICKER | Current High: ... | Previous High: ... | Matched Date: ...`
+- `LOW MATCH | TICKER | Current Low: ... | Previous Low: ... | Matched Date: ...`
+
+No change is required to the Pine Script just to display these messages. The dashboard parses the `HIGH MATCH` / `LOW MATCH` payload and presents the current value, previous matched value, and matched date as structured information.
+
+## Local development
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open the local Vite URL shown by the terminal.
-
-## Build
+## Production build
 
 ```bash
 npm run build
 ```
 
-The production files are created in `dist/`.
+The Vite production output is written to `dist/`.
 
-## Cloudflare deployment
+## Cloudflare
 
-Recommended: deploy the `dist/` folder as a Cloudflare Pages project.
+The repository now contains an explicit `wrangler.jsonc` configuration for the Vite SPA. The configuration serves `dist/` as static assets and enables SPA fallback routing.
 
-1. Push this project to GitHub.
-2. Cloudflare Dashboard -> Workers & Pages -> Create application.
-3. Choose Pages / Connect to Git.
-4. Select this repository.
-5. Build command: `npm run build`
-6. Build output directory: `dist`
-7. Deploy.
+The production custom domain is already associated with the Cloudflare Worker:
 
-Then add the custom domain `app.monkalphacapital.com` from the Pages project's Custom Domains section.
+`monkalphacapital.com`
 
-No D1 binding is required for the frontend because the existing Worker API remains the source of truth.
+## Dashboard behavior
 
-## Important
-
-The frontend polls the existing `/alerts` API every 5 seconds. It does not modify the webhook, D1, or existing Worker.
-
-The current API may return `message: "{{alert_message}}"`. The dashboard displays that placeholder as "TradingView Alert" in the compact feed but preserves the original value in the alert detail view.
-
-## Production checklist
-
-- Confirm https://api.monkalphacapital.com/health returns success.
-- Confirm https://api.monkalphacapital.com/alerts returns alerts.
-- Build with `npm run build`.
-- Deploy the `dist/` output to Cloudflare.
-- Add `app.monkalphacapital.com`.
-- Open the dashboard and confirm the real TSLA records appear.
-- Click Open TradingView and verify the chart URL.
+- Live/offline API status
+- 5-second automatic refresh
+- Manual refresh
+- Optional alert sound
+- Search by ticker, message, exchange or timeframe
+- Date, alert-type and exchange filters
+- Daily alert grouping
+- High Match / Low Match recognition
+- Alert detail drawer with raw payload
+- Direct **Open TradingView** chart button
+- New-alert highlighting
+- India Standard Time (IST) display
+- Monk Alpha Capital branding and favicon
