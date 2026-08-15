@@ -9,7 +9,6 @@ import {
   RefreshCw,
   Search,
   X,
-  Zap,
 } from "lucide-react";
 import "./styles.css";
 
@@ -218,7 +217,9 @@ function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <div className="brand-mark"><Zap size={17} strokeWidth={2.5} /></div>
+          <div className="brand-logo-wrap">
+            <img className="brand-logo" src="/assets/monkalphacapital.jpg" alt="Monk Alpha Capital" />
+          </div>
           <div>
             <div className="brand-title">Monk Alpha Capital</div>
             <div className="brand-subtitle">TradingView Alert Monitor</div>
