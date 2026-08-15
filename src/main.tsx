@@ -38,6 +38,13 @@ type ApiResponse = {
   error?: string;
 };
 
+type MatchInfo = {
+  kind: "HIGH" | "LOW" | null;
+  current: string | null;
+  previous: string | null;
+  date: string | null;
+};
+
 const dateKey = (value: string | null) =>
   new Intl.DateTimeFormat("en-CA", {
     timeZone: TIME_ZONE,
@@ -75,6 +82,27 @@ const formatUpdated = (value: Date) =>
 const messageText = (message: string | null) => {
   if (!message) return "No message";
   return message === "{{alert_message}}" ? "TradingView Alert" : message;
+};
+
+const parseMatch = (alert: Alert): MatchInfo => {
+  const text = messageText(alert.message);
+  const kind = /\bHIGH MATCH\b/i.test(text)
+    ? "HIGH"
+    : /\bLOW MATCH\b/i.test(text)
+      ? "LOW"
+      : null;
+  if (!kind) return { kind: null, current: null, previous: null, date: null };
+
+  const current = text.match(/Current (?:High|Low):\s*\$?([0-9,]+(?:\.[0-9]+)?)/i)?.[1] ?? null;
+  const previous = text.match(/Previous (?:High|Low):\s*\$?([0-9,]+(?:\.[0-9]+)?)/i)?.[1] ?? null;
+  const date = text.match(/Matched Date:\s*([^|]+)/i)?.[1]?.trim() ?? null;
+  return { kind, current, previous, date };
+};
+
+const alertKindLabel = (alert: Alert) => {
+  const match = parseMatch(alert);
+  if (match.kind) return `${match.kind} MATCH`;
+  return alert.alert_type || "TradingView Alert";
 };
 
 const buildTradingViewUrl = (ticker: string, exchange?: string | null) => {
@@ -183,18 +211,22 @@ function App() {
     (a) => dateKey(a.triggered_at || a.received_at) === todayKey
   ).length;
 
-  const weekStart = new Date();
-  weekStart.setHours(0, 0, 0, 0);
-  weekStart.setDate(weekStart.getDate() - 6);
-  const weekAlerts = alerts.filter(
-    (a) => new Date(a.triggered_at || a.received_at) >= weekStart
-  ).length;
+  const weekStartKey = (() => {
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000);
+    return dateKey(sevenDaysAgo.toISOString());
+  })();
+
+  const weekAlerts = alerts.filter((a) => dateKey(a.triggered_at || a.received_at) >= weekStartKey).length;
 
   const uniqueToday = new Set(
     alerts
       .filter((a) => dateKey(a.triggered_at || a.received_at) === todayKey)
       .map((a) => a.ticker.toUpperCase())
   ).size;
+
+  const highMatches = alerts.filter((a) => parseMatch(a).kind === "HIGH").length;
+  const lowMatches = alerts.filter((a) => parseMatch(a).kind === "LOW").length;
 
   const types = [...new Set(alerts.map((a) => a.alert_type).filter(Boolean))] as string[];
   const exchanges = [...new Set(alerts.map((a) => a.exchange).filter(Boolean))] as string[];
@@ -216,12 +248,14 @@ function App() {
     setSearch("");
   };
 
+  const activeFilterCount = [selectedDate !== "all", type !== "all", exchange !== "all", Boolean(search)].filter(Boolean).length;
+
   return (
     <div className="app">
       <header className="topbar">
         <div className="brand">
           <div className="brand-logo-wrap">
-            <img className="brand-logo" src={logoUrl} alt="Monk Alpha Capital" />
+            <img className="brand-logo" src={logoUrl} alt="Monk Alpha Capital logo" />
           </div>
           <div className="brand-copy">
             <div className="brand-title">Monk Alpha Capital</div>
@@ -248,7 +282,7 @@ function App() {
           <div>
             <div className="kicker"><span /> MONK ALPHA CAPITAL · LIVE ALERTS</div>
             <h1>TradingView Alerts</h1>
-            <p>Monitor every alert received by Monk Alpha Capital in one clean, searchable workspace.</p>
+            <p>One place to monitor, search and review every alert received from TradingView.</p>
           </div>
           <button className={`sound-toggle ${sound ? "active" : ""}`} onClick={() => setSound(!sound)}>
             <Activity size={15} />
@@ -263,15 +297,21 @@ function App() {
           <Stat label="Stored Alerts" value={alerts.length} />
         </section>
 
+        <section className="signal-strip">
+          <div><span className="signal-icon high">H</span><div><strong>{highMatches}</strong><small>High Matches</small></div></div>
+          <div><span className="signal-icon low">L</span><div><strong>{lowMatches}</strong><small>Low Matches</small></div></div>
+          <div className="signal-note"><span className="live-pulse" /> Alerts are checked automatically every 5 seconds</div>
+        </section>
+
         <section className="toolbar">
           <div className="search-box">
             <Search size={17} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search ticker, exchange or alert..." />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search ticker, message, exchange..." />
             {search && <button onClick={() => setSearch("")} aria-label="Clear search"><X size={15} /></button>}
           </div>
           <div className="toolbar-actions">
-            <button className="filter-toggle" onClick={() => setShowFilters(!showFilters)}>
-              <Filter size={16} /> Filters <ChevronDown size={15} className={showFilters ? "rotate" : ""} />
+            <button className={`filter-toggle ${activeFilterCount ? "has-filter" : ""}`} onClick={() => setShowFilters(!showFilters)}>
+              <Filter size={16} /> Filters {activeFilterCount > 0 && <b>{activeFilterCount}</b>} <ChevronDown size={15} className={showFilters ? "rotate" : ""} />
             </button>
             <select value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} aria-label="Filter by date">
               <option value="all">All Dates</option>
@@ -306,7 +346,7 @@ function App() {
             <span className="section-title">{selectedDate === "all" ? "Alert History" : formatDate(selectedDate + "T12:00:00Z")}</span>
             <span className="result-count">{filtered.length} {filtered.length === 1 ? "alert" : "alerts"}</span>
           </div>
-          <span className="polling"><span /> Auto-refresh every 5s</span>
+          <span className="polling"><span /> Auto-refresh 5s</span>
         </div>
 
         <section className="feed">
@@ -326,35 +366,44 @@ function App() {
                   <i />
                   <small>{groupAlerts.length} {groupAlerts.length === 1 ? "alert" : "alerts"}</small>
                 </div>
-                {groupAlerts.map((alert) => (
-                  <article className={`alert-row ${newIds.has(alert.id) ? "new-alert" : ""}`} key={alert.id} onClick={() => setSelectedAlert(alert)}>
-                    <div className="alert-time">
-                      <strong>{formatTime(alert.triggered_at || alert.received_at)}</strong>
-                      <span>IST</span>
-                    </div>
-                    <div className="ticker">
-                      <strong>{alert.ticker}</strong>
-                      <span>{alert.exchange || "—"}</span>
-                    </div>
-                    <div className="price">
-                      <strong>{alert.price == null ? "—" : `$${Number(alert.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`}</strong>
-                      <span>{alert.timeframe ? `${alert.timeframe} min` : "—"}</span>
-                    </div>
-                    <div className="alert-info">
-                      <div className="type-line">
-                        <span className={`type-dot ${/buy|long|bull/i.test(alert.alert_type || alert.message || "") ? "positive" : /sell|short|bear/i.test(alert.alert_type || alert.message || "") ? "negative" : ""}`} />
-                        <strong>{alert.alert_type || "TradingView Alert"}</strong>
-                        {newIds.has(alert.id) && <em>NEW</em>}
+                {groupAlerts.map((alert) => {
+                  const match = parseMatch(alert);
+                  return (
+                    <article className={`alert-row ${newIds.has(alert.id) ? "new-alert" : ""}`} key={alert.id} onClick={() => setSelectedAlert(alert)}>
+                      <div className="alert-time">
+                        <strong>{formatTime(alert.triggered_at || alert.received_at)}</strong>
+                        <span>IST</span>
                       </div>
-                      <p>{messageText(alert.message)}</p>
-                    </div>
-                    <div className="row-actions">
-                      <button className="tv-btn" onClick={(e) => { e.stopPropagation(); window.open(buildTradingViewUrl(alert.ticker, alert.exchange), "_blank", "noopener,noreferrer"); }}>
-                        Open TradingView <ExternalLink size={14} />
-                      </button>
-                    </div>
-                  </article>
-                ))}
+                      <div className="ticker">
+                        <strong>{alert.ticker}</strong>
+                        <span>{alert.exchange || "—"}</span>
+                      </div>
+                      <div className="price">
+                        <strong>{alert.price == null ? (match.current ? `$${match.current}` : "—") : `$${Number(alert.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`}</strong>
+                        <span>{alert.timeframe ? `${alert.timeframe} min` : "Daily"}</span>
+                      </div>
+                      <div className="alert-info">
+                        <div className="type-line">
+                          <span className={`type-dot ${match.kind === "HIGH" ? "high-dot" : match.kind === "LOW" ? "low-dot" : ""}`} />
+                          <strong>{alertKindLabel(alert)}</strong>
+                          {newIds.has(alert.id) && <em>NEW</em>}
+                        </div>
+                        {match.kind ? (
+                          <div className="match-summary">
+                            <span>Current <b>${match.current || "—"}</b></span>
+                            <span>Previous <b>${match.previous || "—"}</b></span>
+                            {match.date && <span>Matched {match.date}</span>}
+                          </div>
+                        ) : <p>{messageText(alert.message)}</p>}
+                      </div>
+                      <div className="row-actions">
+                        <button className="tv-btn" onClick={(e) => { e.stopPropagation(); window.open(buildTradingViewUrl(alert.ticker, alert.exchange), "_blank", "noopener,noreferrer"); }}>
+                          Open TradingView <ExternalLink size={14} />
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
             ))
           )}
@@ -372,16 +421,28 @@ function App() {
               </div>
               <button className="icon-btn" onClick={() => setSelectedAlert(null)} aria-label="Close alert details"><X size={18} /></button>
             </div>
+
+            {parseMatch(selectedAlert).kind && (
+              <div className={`match-card ${parseMatch(selectedAlert).kind === "HIGH" ? "high-card" : "low-card"}`}>
+                <div className="match-badge">{parseMatch(selectedAlert).kind} MATCH</div>
+                <div className="match-values">
+                  <div><span>Current {parseMatch(selectedAlert).kind === "HIGH" ? "High" : "Low"}</span><strong>${parseMatch(selectedAlert).current || "—"}</strong></div>
+                  <div><span>Previous {parseMatch(selectedAlert).kind === "HIGH" ? "High" : "Low"}</span><strong>${parseMatch(selectedAlert).previous || "—"}</strong></div>
+                  <div><span>Matched Date</span><strong>{parseMatch(selectedAlert).date || "—"}</strong></div>
+                </div>
+              </div>
+            )}
+
             <div className="detail-grid">
               <Detail label="Price" value={selectedAlert.price == null ? "—" : `$${selectedAlert.price}`} />
               <Detail label="Exchange" value={selectedAlert.exchange || "—"} />
-              <Detail label="Timeframe" value={selectedAlert.timeframe ? `${selectedAlert.timeframe} min` : "—"} />
-              <Detail label="Type" value={selectedAlert.alert_type || "TradingView Alert"} />
-              <Detail label="Triggered" value={`${formatDate(selectedAlert.triggered_at)} · ${formatTime(selectedAlert.triggered_at)} IST`} />
+              <Detail label="Timeframe" value={selectedAlert.timeframe ? `${selectedAlert.timeframe} min` : "Daily"} />
+              <Detail label="Type" value={alertKindLabel(selectedAlert)} />
+              <Detail label="Triggered" value={selectedAlert.triggered_at ? `${formatDate(selectedAlert.triggered_at)} · ${formatTime(selectedAlert.triggered_at)} IST` : "—"} />
               <Detail label="Received" value={`${formatDate(selectedAlert.received_at)} · ${formatTime(selectedAlert.received_at)} IST`} />
             </div>
             <div className="message-block">
-              <span className="eyebrow">Message</span>
+              <span className="eyebrow">TradingView message</span>
               <p>{messageText(selectedAlert.message)}</p>
             </div>
             {selectedAlert.raw_payload && (
