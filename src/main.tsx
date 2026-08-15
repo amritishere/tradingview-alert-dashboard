@@ -15,6 +15,7 @@ import "./styles.css";
 const API_BASE = "https://api.monkalphacapital.com";
 const POLL_MS = 5000;
 const TIME_ZONE = "Asia/Kolkata";
+const logoUrl = new URL("../assets/monkalphacapital.jpg", import.meta.url).href;
 
 type Alert = {
   id: number;
@@ -185,7 +186,9 @@ function App() {
   const weekStart = new Date();
   weekStart.setHours(0, 0, 0, 0);
   weekStart.setDate(weekStart.getDate() - 6);
-  const weekAlerts = alerts.filter((a) => new Date(a.triggered_at || a.received_at) >= weekStart).length;
+  const weekAlerts = alerts.filter(
+    (a) => new Date(a.triggered_at || a.received_at) >= weekStart
+  ).length;
 
   const uniqueToday = new Set(
     alerts
@@ -218,9 +221,9 @@ function App() {
       <header className="topbar">
         <div className="brand">
           <div className="brand-logo-wrap">
-            <img className="brand-logo" src="/assets/monkalphacapital.jpg" alt="Monk Alpha Capital" />
+            <img className="brand-logo" src={logoUrl} alt="Monk Alpha Capital" />
           </div>
-          <div>
+          <div className="brand-copy">
             <div className="brand-title">Monk Alpha Capital</div>
             <div className="brand-subtitle">TradingView Alert Monitor</div>
           </div>
@@ -243,9 +246,9 @@ function App() {
       <main className="container">
         <section className="intro">
           <div>
-            <div className="kicker"><span /> REAL-TIME ALERT FEED</div>
+            <div className="kicker"><span /> MONK ALPHA CAPITAL · LIVE ALERTS</div>
             <h1>TradingView Alerts</h1>
-            <p>Every alert received by Monk Alpha Capital, organized and searchable.</p>
+            <p>Monitor every alert received by Monk Alpha Capital in one clean, searchable workspace.</p>
           </div>
           <button className={`sound-toggle ${sound ? "active" : ""}`} onClick={() => setSound(!sound)}>
             <Activity size={15} />
